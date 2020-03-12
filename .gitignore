@@ -1,2 +1,4 @@
 env
-env*
+env**
+.ipynb_checkpoints
+original_data
