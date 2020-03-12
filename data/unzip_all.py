@@ -1,3 +1,4 @@
+# Run this script while inside data folder
 import os
 import glob
 import sh
