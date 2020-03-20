@@ -2,3 +2,6 @@ env
 env**
 .ipynb_checkpoints
 original_data
+
+# Pickle files
+*.pickle
