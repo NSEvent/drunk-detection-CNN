@@ -5,3 +5,4 @@ original_data
 
 # Pickle files
 *.pickle
+*.pkl
