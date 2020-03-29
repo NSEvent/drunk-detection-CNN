@@ -9,11 +9,16 @@ import os
 import pickle
 from PIL import Image
 import re
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import GridSearchCV
+
+# Model types
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression, SGDClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 
 
 class DrunkDetector:
@@ -89,9 +94,48 @@ class DrunkDetector:
         self.val_y = np.array([datum['y'] for datum in self.data['val']])
         self.test_y = np.array([datum['y'] for datum in self.data['test']])
 
-        self.train_svm()
-        self.train_rf()
-        self.train_lr()
+        # self.train_svm()
+        # self.train_rf()
+        # self.train_lr()
+        # self.train_sgd()
+        # self.train_knn()
+        # self.train_dt()
+        self.train_mlp()
+
+    # Decision Tree
+    def train_dt(self):
+        dt = DecisionTreeClassifier()
+        dt.fit(self.train_X_2d, self.train_y)
+        pred_y = dt.predict(self.val_X_2d)
+        print('Decision Tree accuracy:', accuracy_score(self.val_y, pred_y))
+
+    # K Nearest Neighbors
+    def train_knn(self):
+        knn = KNeighborsClassifier()
+        knn.fit(self.train_X_2d, self.train_y)
+        pred_y = knn.predict(self.val_X_2d)
+        print('KNN accuracy:', accuracy_score(self.val_y, pred_y))
+
+    # Logistic Regression
+    def train_lr(self):
+        lr = LogisticRegression(max_iter=200)
+        lr.fit(self.train_X_2d, self.train_y)
+        pred_y = lr.predict(self.val_X_2d)
+        print('logistic regression accuracy:', accuracy_score(self.val_y, pred_y))
+
+    # Multi-Layer Perceptron
+    def train_mlp(self):
+        parameters = {
+            'learning_rate': ['constant', 'invscaling', 'adaptive'],
+            'activation': ['identity', 'logistic', 'tanh', 'relu'],
+            'solver': ['lbfgs', 'sgd', 'adam']
+            # 'hidden_layer_sizes': []
+        }
+        mlp = MLPClassifier()
+        clf = GridSearchCV(mlp, parameters)
+        clf.fit(self.train_X_2d, self.train_y)
+        pred_y = clf.predict(self.val_X_2d)
+        print('Multi-Layer Perceptron accuracy:', accuracy_score(self.val_y, pred_y))
 
     # Random Forest
     def train_rf(self):
@@ -107,19 +151,19 @@ class DrunkDetector:
         print('random forest accuracy:', accuracy_score(self.val_y, pred_y))
         print('\tparams:', clf.best_params_)
 
+    # Stochastic Gradient Descent
+    def train_sgd(self):
+        sgd = SGDClassifier()
+        sgd.fit(self.train_X_2d, self.train_y)
+        pred_y = sgd.predict(self.val_X_2d)
+        print('Stochastic Gradient Descent accuracy:', accuracy_score(self.val_y, pred_y))
+
     # Support Vector Machine
     def train_svm(self):
         svc = SVC()
         svc.fit(self.train_X_2d, self.train_y)
         pred_y = svc.predict(self.val_X_2d)
         print('svm accuracy:', accuracy_score(self.val_y, pred_y))
-
-    # Logistic Regression
-    def train_lr(self):
-        lr = LogisticRegression(max_iter=200)
-        lr.fit(self.train_X_2d, self.train_y)
-        pred_y = lr.predict(self.val_X_2d)
-        print('logistic regression accuracy:', accuracy_score(self.val_y, pred_y))
 
 
 def parse_args():
