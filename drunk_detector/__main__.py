@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # e.g.: python drunk_detector data --train-files data/train/*/* --test-files data/test/*/* --val-files data/validation/*/*
+#       python drunk_detector train -d data_2020-03-18_20-59-45.pickle
 
 import argparse
 import datetime
@@ -9,6 +10,7 @@ import os
 import pickle
 from PIL import Image
 import re
+from scipy.ndimage import gaussian_filter
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import GridSearchCV
 
@@ -32,10 +34,78 @@ class DrunkDetector:
         self.read_images(self.args.train_files, 'train')
         self.read_images(self.args.test_files, 'test')
         self.read_images(self.args.val_files, 'val')
+        self.augment_data('train')
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         filename = '{}_{}.pickle'.format('data', curr_datetime)
         with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
             pickle.dump(self.data, out_file)
+
+    def augment_data(self, split_set):
+        augmented_data = []
+        for datum in self.data[split_set]:
+            # horizontal flip with a noise on non-zero values
+            variance = [[[20 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
+            thermal_frames = np.random.normal(np.flip(datum['thermal_frames'], 2), variance)
+            thermal_sum = np.zeros((128, 160))
+            for f, frame in enumerate(thermal_frames):
+                min_val = max(np.amin(frame), 0)
+                frame -= min_val
+                for r, row in enumerate(frame):
+                    for c, val in enumerate(row):
+                        if val < 0:
+                            val = 0
+                            thermal_frames[f, r, c] = 0
+                        thermal_sum[r, c] += val
+            augmented_data.append({
+                'filename': datum['filename'] + '_flipped',
+                'thermal_sum': thermal_sum,
+                'thermal_frames': thermal_frames,
+                'y': datum['y']
+            })
+
+            # noisy version of image
+            variance = [[[100 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
+            thermal_frames = np.random.normal(datum['thermal_frames'], variance)
+            thermal_sum = np.zeros((128, 160))
+            for f, frame in enumerate(thermal_frames):
+                min_val = max(np.amin(frame), 0)
+                frame -= min_val
+                for r, row in enumerate(frame):
+                    for c, val in enumerate(row):
+                        if val < 0:
+                            val = 0
+                            thermal_frames[f, r, c] = 0
+                        thermal_sum[r, c] += val
+            augmented_data.append({
+                'filename': datum['filename'] + '_noisy',
+                'thermal_sum': thermal_sum,
+                'thermal_frames': thermal_frames,
+                'y': datum['y']
+            })
+
+            # blurred version of image
+            thermal_frames = gaussian_filter(datum['thermal_frames'], sigma=3)
+            thermal_sum = np.zeros((128, 160))
+            for _, frame in enumerate(thermal_frames):
+                min_val = max(np.amin(frame), 0)
+                frame -= min_val
+                for r, row in enumerate(frame):
+                    for c, val in enumerate(row):
+                        thermal_sum[r, c] += val
+            augmented_data.append({
+                'filename': datum['filename'] + '_blur',
+                'thermal_sum': thermal_sum,
+                'thermal_frames': thermal_frames,
+                'y': datum['y']
+            })
+
+            # im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
+            # im.show()
+            # im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
+            # im_orig.show()
+            # im_orig.show()
+            # breakpoint()
+        self.data[split_set] += augmented_data
 
     def read_images(self, files, split_set):
         for filename in files:
@@ -44,7 +114,6 @@ class DrunkDetector:
                 continue
 
             with Image.open(filename) as img:
-                # breakpoint()
                 self.data[split_set].append({
                     'filename': basename,
                     'thermal_sum': np.zeros((128, 160)),
@@ -99,8 +168,8 @@ class DrunkDetector:
         # self.train_lr()
         # self.train_sgd()
         # self.train_knn()
-        # self.train_dt()
-        self.train_mlp()
+        self.train_dt()
+        # self.train_mlp()
 
     # Decision Tree
     def train_dt(self):
@@ -196,5 +265,3 @@ if __name__ == '__main__':
 
     elif args.mode == 'predict':
         pass
-
-
