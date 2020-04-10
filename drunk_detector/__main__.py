@@ -10,8 +10,9 @@ import os
 import pickle
 from PIL import Image
 import re
+import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GridSearchCV
 
 # Model types
@@ -21,6 +22,13 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
+
+# Tensorflow Keras imports
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import load_model, save_model
+from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten, BatchNormalization, Conv2D, MaxPooling2D
+from tensorflow.keras import optimizers
 
 
 class DrunkDetector:
@@ -35,6 +43,8 @@ class DrunkDetector:
         self.read_images(self.args.test_files, 'test')
         self.read_images(self.args.val_files, 'val')
         self.augment_data('train')
+        self.augment_data('val')
+        self.augment_data('test')
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         filename = '{}_{}.pickle'.format('data', curr_datetime)
         with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
@@ -168,8 +178,9 @@ class DrunkDetector:
         # self.train_lr()
         # self.train_sgd()
         # self.train_knn()
-        self.train_dt()
+        # self.train_dt()
         # self.train_mlp()
+        self.train_cnn()
 
     # Decision Tree
     def train_dt(self):
@@ -234,6 +245,115 @@ class DrunkDetector:
         pred_y = svc.predict(self.val_X_2d)
         print('svm accuracy:', accuracy_score(self.val_y, pred_y))
 
+    # Convolutional Neural Network
+    def train_cnn(self):
+        assert self.args.data_mode == 'sum', \
+                'Use [-m sum] for training CNN'
+
+        x, y = self.train_X.shape[1:]
+
+        model = Sequential()
+        # Layer 1
+        model.add(Conv2D(8, (3, 3), input_shape=(x,y,1)))
+        model.add(Activation('relu'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        # Layer 2
+        model.add(Conv2D(32, (3, 3)))
+        model.add(Activation('relu'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        # Layer 3
+        model.add(Conv2D(32, (3, 3)))
+        model.add(Activation('relu'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        # Output layer
+        model.add(Flatten())
+        model.add(Dense(64, activation='relu'))
+        model.add(BatchNormalization())
+        model.add(Dense(1))
+        model.add(Activation('sigmoid'))
+
+        model.compile(loss='binary_crossentropy',
+                        optimizer='adam',
+                        metrics=['accuracy'])
+
+        # Treat every sober image with same weight as 3 drunk images
+        # https://www.tensorflow.org/tutorials/structured_data/imbalanced_data#class_weights
+        class_weight = {0: (1/4)/2, 1: (3/4)/2}
+
+        #### Below is adapted from class example of CNN
+        num_epochs = 1000
+
+        # Holds performance statistics across epochs
+        perf_time = np.zeros((num_epochs, 4))
+
+        # Set up figure
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+
+        best_val = [np.inf, 0]
+        for epoch in np.arange(0,num_epochs):
+            model.fit(cnn_data(self.train_X), np.array(self.train_y),
+                      batch_size=128,
+                      epochs=1,
+                      verbose=1,
+                      class_weight=class_weight,
+                      validation_data=(cnn_data(self.val_X), np.array(self.val_y)),
+                      shuffle=True,
+                      use_multiprocessing=True)
+            # Check the performance on train/test/val
+            # The model.evaluate function returns an array: [loss, accuracy]
+            val = model.evaluate(cnn_data(self.val_X), np.array(self.val_y))  # val = [val_loss, val_accuracy]
+            new = [model.evaluate(cnn_data(self.train_X), np.array(self.train_y))[1],
+                   val[0], val[1],
+                   model.evaluate(cnn_data(self.test_X), np.array(self.test_y))[1]]
+            perf_time[epoch,:]=new
+
+            # Visualize
+            plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,0],'b', label='train')
+            plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,2],'r', label='validation')
+            plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,3],'g', label='test')
+            plt.legend(loc='upper left')
+            plt.show()
+
+            # Test if validation performance has improved (val_loss)
+            if val[0] >= best_val[0]:
+                best_val[1] += 1
+            else:
+                best_val = [val[0], 0]
+            print ("epoch %d, loss %f, number %d" %(epoch, best_val[0], best_val[1]))
+
+            # Stop training if performance hasn't increased in STOP_ITERATIONS
+            STOP_ITERATIONS = 30
+            if best_val[1] > STOP_ITERATIONS:
+                break
+
+        # Export model and test/val/train plot
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+        plt.xlabel('Epochs')
+        plt.ylabel('Accuracy')
+        plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,0],'b', label='train')
+        plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,2],'r', label='validation')
+        plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,3],'g', label='test')
+        plt.legend(loc='upper left')
+
+        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        filename_fig = '{}_{}.png'.format('cnn_fig', curr_datetime)
+        plt.savefig(filename_fig)
+        plt.close('all') # Close fig to save memory
+
+        filename_model = '{}_{}.hdf5'.format('cnn_model', curr_datetime)
+        save_model(model, filename_model)
+
+        pred_y = model.predict_classes(cnn_data(self.test_X))
+        print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
+        print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
+
+# Only for X data, use np.array(y) for y data
+# Returns data formatted for Keras CNN input
+def cnn_data(data):
+    x, y = data.shape[1:]
+    return data.reshape((-1, x, y, 1))
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -261,7 +381,9 @@ if __name__ == '__main__':
         dd.format_data()
 
     elif args.mode == 'train':
+        # TODO randomize train and val data here
         dd.train()
 
     elif args.mode == 'predict':
+        # TODO randomize test data here
         pass
