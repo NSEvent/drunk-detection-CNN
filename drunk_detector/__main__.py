@@ -10,8 +10,10 @@ import os
 import pickle
 from PIL import Image
 import re
+import itertools
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
+from sklearn.utils import shuffle
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GridSearchCV
 
@@ -29,6 +31,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.models import load_model, save_model
 from tensorflow.keras.layers import Dense, Dropout, Activation, Flatten, BatchNormalization, Conv2D, MaxPooling2D
 from tensorflow.keras import optimizers
+from tensorflow.keras.callbacks import TensorBoard, ModelCheckpoint
 
 
 class DrunkDetector:
@@ -247,8 +250,14 @@ class DrunkDetector:
 
     # Convolutional Neural Network
     def train_cnn(self):
-        assert self.args.data_mode == 'sum', \
-                'Use [-m sum] for training CNN'
+        #assert self.args.data_mode == 'sum', \
+                #'Use [-m sum] for training CNN'
+            
+        self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
+        self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
+        self.test_X = tf.keras.utils.normalize(self.test_X, axis=1)
+        
+        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
         x, y = self.train_X.shape[1:]
 
@@ -258,7 +267,7 @@ class DrunkDetector:
         model.add(Activation('relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
         # Layer 2
-        model.add(Conv2D(32, (3, 3)))
+        model.add(Conv2D(16, (3, 3)))
         model.add(Activation('relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
         # Layer 3
@@ -269,11 +278,12 @@ class DrunkDetector:
         model.add(Flatten())
         model.add(Dense(64, activation='relu'))
         model.add(BatchNormalization())
+        
         model.add(Dense(1))
         model.add(Activation('sigmoid'))
 
         model.compile(loss='binary_crossentropy',
-                        optimizer='adam',
+                        optimizer=optimizers.Adam(learning_rate=args.learning_rate),
                         metrics=['accuracy'])
 
         # Treat every sober image with same weight as 3 drunk images
@@ -293,7 +303,7 @@ class DrunkDetector:
         best_val = [np.inf, 0]
         for epoch in np.arange(0,num_epochs):
             model.fit(cnn_data(self.train_X), np.array(self.train_y),
-                      batch_size=128,
+                      batch_size=32,
                       epochs=1,
                       verbose=1,
                       class_weight=class_weight,
@@ -318,8 +328,12 @@ class DrunkDetector:
             # Test if validation performance has improved (val_loss)
             if val[0] >= best_val[0]:
                 best_val[1] += 1
+            # Model improved
             else:
                 best_val = [val[0], 0]
+                # Save current best model
+                filename_model = '{}_{}_epoch={}_val_acc={}.hdf5'.format('cnn_model', curr_datetime, epoch, val[1])
+                save_model(model, filename_model)
             print ("epoch %d, loss %f, number %d" %(epoch, best_val[0], best_val[1]))
 
             # Stop training if performance hasn't increased in STOP_ITERATIONS
@@ -337,7 +351,6 @@ class DrunkDetector:
         plt.plot(np.arange(0,epoch+1),perf_time[0:epoch+1,3],'g', label='test')
         plt.legend(loc='upper left')
 
-        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         filename_fig = '{}_{}.png'.format('cnn_fig', curr_datetime)
         plt.savefig(filename_fig)
         plt.close('all') # Close fig to save memory
@@ -348,6 +361,117 @@ class DrunkDetector:
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
+        
+        
+    # Convolutional Neural Network hyperparameter tuning
+    def train_cnn_hyperparameters(self):
+        assert self.args.data_mode == 'sum', \
+                'Use [-m sum] for training CNN'
+            
+        self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
+        self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
+        self.test_X = tf.keras.utils.normalize(self.test_X, axis=1)
+        
+        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+        x, y = self.train_X.shape[1:]
+
+        
+        # saved_acc = pickle.load(open('saved_acc.pickle, 'rb'))
+        
+        # hyperparameters
+        num_convlayers = [1, 2, 3]
+        convlayer_size = [8, 16, 32]
+        num_denselayers = [0, 1, 2]
+        denselayer_size = [128, 256, 512]
+        learning_rate = [0.01, 0.001, 0.0001]
+        batch_size = [16, 32]
+        # batch_normalization = [True, False]
+        
+        # creates a list of all combinations of hyperparameters
+        param_grid = list(itertools.product(
+            num_convlayers, convlayer_size, 
+            num_denselayers, denselayer_size,
+            learning_rate, 
+            batch_size))
+
+        print(f'CNN hyperparameter tuning with {len(param_grid)} combinations')
+        
+        # offset = len(saved_acc)
+        for i, params in enumerate(shuffle(param_grid)):
+            
+            print(f'Run {i}/{len(param_grid)}')
+            
+            # tuning parameters
+            num_convlayers, \
+            convlayer_size, \
+            num_denselayers, \
+            denselayer_size, \
+            learning_rate, \
+            batch_size = params
+            
+            NAME = f'n_clayers={num_convlayers},clayer_sz={convlayer_size},n_dlayers={num_denselayers},dlayer_sz={denselayer_size},lr={learning_rate},bat_size={batch_size}'
+            tensorboard = TensorBoard(log_dir=f'logs/{NAME}')
+            
+#             save_best_model_loss = ModelCheckpoint("val_loss={val_loss:.4f}"+f"{NAME}.hdf5", 
+#                                                   monitor='val_loss', 
+#                                                   verbose=0, save_best_only=True, 
+#                                                   save_weights_only=False, 
+#                                                   mode='auto', save_freq='epoch')
+#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint("val_acc={val_accuracy:.4f}"+f"{NAME}.hdf5", 
+#                                                      monitor='val_accuracy', 
+#                                                      verbose=0, save_best_only=True, 
+#                                                      save_weights_only=False, 
+#                                                      mode='auto', save_freq='epoch')
+            early_stopping = tf.keras.callbacks.EarlyStopping(
+                                                    monitor='val_accuracy', 
+                                                    verbose=1,
+                                                    patience=30,
+                                                    mode='auto',
+                                                    restore_best_weights=False)
+            
+            model = Sequential()
+            # Conv layer 1
+            model.add(Conv2D(convlayer_size, (3, 3), input_shape=(x,y,1)))
+            model.add(Activation('relu'))
+            model.add(MaxPooling2D(pool_size=(2, 2)))
+            
+            # Additional Conv layers
+            for _ in range(num_convlayers-1):
+                model.add(Conv2D(convlayer_size, (3, 3)))
+                model.add(Activation('relu'))
+                model.add(MaxPooling2D(pool_size=(2, 2)))
+
+            # Dense layer 1
+            model.add(Flatten())
+            for _ in range(num_denselayers):
+                model.add(Dense(denselayer_size, activation='relu'))
+            
+            if False: 
+                model.add(BatchNormalization())
+
+            model.add(Dense(1))
+            model.add(Activation('sigmoid'))
+
+            model.compile(loss='binary_crossentropy',
+                            optimizer=optimizers.Adam(learning_rate=learning_rate),
+                            metrics=['accuracy'])
+
+            # Treat every sober image with same weight as 3 drunk images
+            # https://www.tensorflow.org/tutorials/structured_data/imbalanced_data#class_weights
+            class_weight = {0: (1/4)/2, 1: (3/4)/2}
+
+            num_epochs = 1000
+            model.fit(cnn_data(self.train_X), np.array(self.train_y),
+                      batch_size=batch_size,
+                      epochs=num_epochs,
+                      verbose=1,
+                      class_weight=class_weight,
+                      validation_data=(cnn_data(self.val_X), np.array(self.val_y)),
+                      shuffle=True,
+                      use_multiprocessing=True,
+                      callbacks=[tensorboard, early_stopping])
+
 
 # Only for X data, use np.array(y) for y data
 # Returns data formatted for Keras CNN input
@@ -370,6 +494,7 @@ def parse_args():
     args = parser.parse_args()
     if args.mode not in ['data', 'train', 'predict']:
         parser.print_help()
+    print(args)
     return args
 
 
