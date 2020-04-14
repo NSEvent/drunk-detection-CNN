@@ -2,6 +2,7 @@
 
 # e.g.: python drunk_detector data --train-files data/train/*/* --test-files data/test/*/* --val-files data/validation/*/*
 #       python drunk_detector train -d data_2020-03-18_20-59-45.pickle
+# tensorboard --logdir="logs/"
 
 import argparse
 import datetime
@@ -16,6 +17,8 @@ from scipy.ndimage import gaussian_filter
 from sklearn.utils import shuffle
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GridSearchCV
+
+from imgaug import augmenters as iaa
 
 # Model types
 from sklearn.ensemble import RandomForestClassifier
@@ -45,15 +48,18 @@ class DrunkDetector:
         self.read_images(self.args.train_files, 'train')
         self.read_images(self.args.test_files, 'test')
         self.read_images(self.args.val_files, 'val')
-        self.augment_data('train')
-        self.augment_data('val')
-        self.augment_data('test')
+#         self.augment_data('train')
+#         self.augment_data('val')
+#         self.augment_data('test')
+        # Current data shows that self.augment_data() produces data not suitable for training on CNN
+        # Using flip for data augmentation in self.train()
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         filename = '{}_{}.pickle'.format('data', curr_datetime)
         with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
             pickle.dump(self.data, out_file)
 
     def augment_data(self, split_set):
+        
         augmented_data = []
         for datum in self.data[split_set]:
             # horizontal flip with a noise on non-zero values
@@ -112,12 +118,12 @@ class DrunkDetector:
                 'y': datum['y']
             })
 
-            # im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
-            # im.show()
-            # im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
-            # im_orig.show()
-            # im_orig.show()
-            # breakpoint()
+            im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
+            im.show()
+            im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
+            im_orig.show()
+            im_orig.show()
+            breakpoint()
         self.data[split_set] += augmented_data
 
     def read_images(self, files, split_set):
@@ -149,7 +155,10 @@ class DrunkDetector:
         return re.match(self.face_filename_pattern, filename) is not None
 
     def is_sober_image(self, filename):
-        return re.match(self.sober_filename_patter, filename) is not None
+        if re.match(self.sober_filename_patter, filename) is not None:
+            return 0
+        else:
+            return 1
 
     def train(self):
         if self.args.data is None:
@@ -160,7 +169,7 @@ class DrunkDetector:
             self.data = pickle.load(data_file)
 
         if self.args.data_mode == 'frames':
-            self.train_X = shuffle(np.array([datum['thermal_frames'] for datum in self.data['train']])
+            self.train_X = np.array([datum['thermal_frames'] for datum in self.data['train']])
             self.val_X = np.array([datum['thermal_frames'] for datum in self.data['val']])
             self.test_X = np.array([datum['thermal_frames'] for datum in self.data['test']])
         elif self.args.data_mode == 'sum':
@@ -176,6 +185,20 @@ class DrunkDetector:
         self.val_y = np.array([datum['y'] for datum in self.data['val']])
         self.test_y = np.array([datum['y'] for datum in self.data['test']])
         
+        # Flip data
+        flip_seq = iaa.Sequential([
+            iaa.Fliplr(1), # horizontally flip all of the images
+        ])
+        flip_data = flip_seq(images=self.train_X)
+        self.train_X = np.concatenate((self.train_X, flip_data), axis=0)
+        self.train_y = np.concatenate((self.train_y, self.train_y), axis=0)
+        flip_data = flip_seq(images=self.test_X)
+        self.test_X = np.concatenate((self.test_X, flip_data), axis=0)
+        self.test_y = np.concatenate((self.test_y, self.test_y), axis=0)
+        flip_data = flip_seq(images=self.val_X)
+        self.val_X = np.concatenate((self.val_X, flip_data), axis=0)
+        self.val_y = np.concatenate((self.val_y, self.val_y), axis=0)
+        
         # Shuffle data
         self.train_X, self.train_y = shuffle_pair(self.train_X, self.train_y)
         self.val_X, self.val_y = shuffle_pair(self.val_X, self.val_y)
@@ -188,7 +211,8 @@ class DrunkDetector:
         # self.train_knn()
         # self.train_dt()
         # self.train_mlp()
-        self.train_cnn()
+        self.test_best_model()
+        # self.train_cnn_hyperparameters()
 
     # Decision Tree
     def train_dt(self):
@@ -252,15 +276,18 @@ class DrunkDetector:
         svc.fit(self.train_X_2d, self.train_y)
         pred_y = svc.predict(self.val_X_2d)
         print('svm accuracy:', accuracy_score(self.val_y, pred_y))
-
-    # Convolutional Neural Network
-    def train_cnn(self):
+        
+    def prepare_data_cnn(self):
         assert self.args.data_mode == 'sum', \
                 'Use [-m sum] for training CNN'
             
         self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
         self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
         self.test_X = tf.keras.utils.normalize(self.test_X, axis=1)
+
+    # Convolutional Neural Network
+    def train_cnn(self):
+        self.prepare_data_cnn()
         
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
@@ -290,7 +317,7 @@ class DrunkDetector:
         model.add(Activation('sigmoid'))
 
         model.compile(loss='binary_crossentropy',
-                        optimizer=optimizers.Adam(learning_rate=args.learning_rate),
+                        optimizer=optimizers.Adam(learning_rate=0.001),
                         metrics=['accuracy'])
 
         # Treat every sober image with same weight as 3 drunk images
@@ -369,15 +396,18 @@ class DrunkDetector:
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
         
+    def test_best_model(self):
+        self.prepare_data_cnn()
+                
+        model = load_model('models/best.hdf5')
+        pred_y = model.predict_classes(cnn_data(self.test_X))
+        print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
+        print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
+        
         
     # Convolutional Neural Network hyperparameter tuning
     def train_cnn_hyperparameters(self):
-        assert self.args.data_mode == 'sum', \
-                'Use [-m sum] for training CNN'
-            
-        self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
-        self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
-        self.test_X = tf.keras.utils.normalize(self.test_X, axis=1)
+        self.prepare_data_cnn()
         
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
@@ -393,7 +423,6 @@ class DrunkDetector:
         denselayer_size = [128, 256, 512]
         learning_rate = [0.01, 0.001, 0.0001]
         batch_size = [16, 32]
-        # batch_normalization = [True, False]
         
         # creates a list of all combinations of hyperparameters
         param_grid = list(itertools.product(
