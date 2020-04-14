@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # e.g.: python drunk_detector data --train-files data/train/*/* --test-files data/test/*/* --val-files data/validation/*/*
-#       python drunk_detector train -d data_2020-03-18_20-59-45.pickle
+#       python drunk_detector train -d data_2020-04-09_12-20-39.pickle
 # tensorboard --logdir="logs/"
 
 import argparse
@@ -21,7 +21,7 @@ from sklearn.model_selection import GridSearchCV
 from imgaug import augmenters as iaa
 
 # Model types
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
@@ -59,71 +59,72 @@ class DrunkDetector:
             pickle.dump(self.data, out_file)
 
     def augment_data(self, split_set):
-        
+
         augmented_data = []
         for datum in self.data[split_set]:
-            # horizontal flip with a noise on non-zero values
-            variance = [[[20 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
-            thermal_frames = np.random.normal(np.flip(datum['thermal_frames'], 2), variance)
-            thermal_sum = np.zeros((128, 160))
-            for f, frame in enumerate(thermal_frames):
-                min_val = max(np.amin(frame), 0)
-                frame -= min_val
-                for r, row in enumerate(frame):
-                    for c, val in enumerate(row):
-                        if val < 0:
-                            val = 0
-                            thermal_frames[f, r, c] = 0
-                        thermal_sum[r, c] += val
-            augmented_data.append({
-                'filename': datum['filename'] + '_flipped',
-                'thermal_sum': thermal_sum,
-                'thermal_frames': thermal_frames,
-                'y': datum['y']
-            })
+            for _ in range(1 if datum['y'] else 1):
+                # horizontal flip with a noise on non-zero values
+                variance = [[[20 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
+                thermal_frames = np.random.normal(np.flip(datum['thermal_frames'], 2), variance)
+                thermal_sum = np.zeros((128, 160))
+                for f, frame in enumerate(thermal_frames):
+                    min_val = max(np.amin(frame), 0)
+                    frame -= min_val
+                    for r, row in enumerate(frame):
+                        for c, val in enumerate(row):
+                            if val < 0:
+                                val = 0
+                                thermal_frames[f, r, c] = 0
+                            thermal_sum[r, c] += val
+                augmented_data.append({
+                    'filename': datum['filename'] + '_flipped',
+                    'thermal_sum': thermal_sum,
+                    'thermal_frames': thermal_frames,
+                    'y': datum['y']
+                })
 
-            # noisy version of image
-            variance = [[[100 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
-            thermal_frames = np.random.normal(datum['thermal_frames'], variance)
-            thermal_sum = np.zeros((128, 160))
-            for f, frame in enumerate(thermal_frames):
-                min_val = max(np.amin(frame), 0)
-                frame -= min_val
-                for r, row in enumerate(frame):
-                    for c, val in enumerate(row):
-                        if val < 0:
-                            val = 0
-                            thermal_frames[f, r, c] = 0
-                        thermal_sum[r, c] += val
-            augmented_data.append({
-                'filename': datum['filename'] + '_noisy',
-                'thermal_sum': thermal_sum,
-                'thermal_frames': thermal_frames,
-                'y': datum['y']
-            })
+                # noisy version of image
+                variance = [[[25 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
+                thermal_frames = np.random.normal(datum['thermal_frames'], variance)
+                thermal_sum = np.zeros((128, 160))
+                for f, frame in enumerate(thermal_frames):
+                    min_val = max(np.amin(frame), 0)
+                    frame -= min_val
+                    for r, row in enumerate(frame):
+                        for c, val in enumerate(row):
+                            if val < 0:
+                                val = 0
+                                thermal_frames[f, r, c] = 0
+                            thermal_sum[r, c] += val
+                augmented_data.append({
+                    'filename': datum['filename'] + '_noisy',
+                    'thermal_sum': thermal_sum,
+                    'thermal_frames': thermal_frames,
+                    'y': datum['y']
+                })
 
-            # blurred version of image
-            thermal_frames = gaussian_filter(datum['thermal_frames'], sigma=3)
-            thermal_sum = np.zeros((128, 160))
-            for _, frame in enumerate(thermal_frames):
-                min_val = max(np.amin(frame), 0)
-                frame -= min_val
-                for r, row in enumerate(frame):
-                    for c, val in enumerate(row):
-                        thermal_sum[r, c] += val
-            augmented_data.append({
-                'filename': datum['filename'] + '_blur',
-                'thermal_sum': thermal_sum,
-                'thermal_frames': thermal_frames,
-                'y': datum['y']
-            })
+                # blurred version of image
+                thermal_frames = gaussian_filter(datum['thermal_frames'], sigma=3)
+                thermal_sum = np.zeros((128, 160))
+                for _, frame in enumerate(thermal_frames):
+                    min_val = max(np.amin(frame), 0)
+                    frame -= min_val
+                    for r, row in enumerate(frame):
+                        for c, val in enumerate(row):
+                            thermal_sum[r, c] += val
+                augmented_data.append({
+                    'filename': datum['filename'] + '_blur',
+                    'thermal_sum': thermal_sum,
+                    'thermal_frames': thermal_frames,
+                    'y': datum['y']
+                })
 
-            im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
-            im.show()
-            im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
-            im_orig.show()
-            im_orig.show()
-            breakpoint()
+            # im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
+            # im.show()
+            # im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
+            # im_orig.show()
+            # im_orig.show()
+
         self.data[split_set] += augmented_data
 
     def read_images(self, files, split_set):
@@ -184,7 +185,7 @@ class DrunkDetector:
         self.train_y = np.array([datum['y'] for datum in self.data['train']])
         self.val_y = np.array([datum['y'] for datum in self.data['val']])
         self.test_y = np.array([datum['y'] for datum in self.data['test']])
-        
+
         # Flip data
         flip_seq = iaa.Sequential([
             iaa.Fliplr(1), # horizontally flip all of the images
@@ -198,42 +199,69 @@ class DrunkDetector:
         flip_data = flip_seq(images=self.val_X)
         self.val_X = np.concatenate((self.val_X, flip_data), axis=0)
         self.val_y = np.concatenate((self.val_y, self.val_y), axis=0)
-        
+
         # Shuffle data
         self.train_X, self.train_y = shuffle_pair(self.train_X, self.train_y)
         self.val_X, self.val_y = shuffle_pair(self.val_X, self.val_y)
         self.test_X, self.test_y = shuffle_pair(self.test_X, self.test_y)
 
-        # self.train_svm()
-        # self.train_rf()
-        # self.train_lr()
-        # self.train_sgd()
-        # self.train_knn()
-        # self.train_dt()
+        # svc = self.train_svm()
+        # rfc = self.train_rf()
+        # lr = self.train_lr()
+        # sgd = self.train_sgd()
+        # knn = self.train_knn()
+        # dt = self.train_dt()
+        voter = self.train_voter()
         # self.train_mlp()
         self.test_best_model()
         # self.train_cnn_hyperparameters()
+
+        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        filename = '{}_{}.pickle'.format('voter', curr_datetime)
+        with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
+            pickle.dump(voter, out_file)
+
+
+    # Voting Classifier
+    def train_voter(self):
+        dt = DecisionTreeClassifier()
+        knn = KNeighborsClassifier()
+        lr = LogisticRegression(max_iter=200)
+        rfc = RandomForestClassifier(class_weight='balanced', n_estimators=250, min_impurity_decrease=0)
+        sgd = SGDClassifier(loss='log')
+        svc = SVC(probability=True)
+        voter = VotingClassifier(
+            estimators=[('dt', dt), ('knn', knn), ('lr', lr), ('rfc', rfc), ('sgd', sgd), ('svc', svc)],
+            voting='soft')
+
+        voter.fit(self.train_X_2d, self.train_y)
+        pred_y = voter.predict(self.val_X_2d)
+        print('voter accuracy:', accuracy_score(self.val_y, pred_y))
+        return voter
 
     # Decision Tree
     def train_dt(self):
         dt = DecisionTreeClassifier()
         dt.fit(self.train_X_2d, self.train_y)
-        pred_y = dt.predict(self.val_X_2d)
-        print('Decision Tree accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = dt.predict(self.val_X_2d)
+        # print('Decision Tree accuracy:', accuracy_score(self.val_y, pred_y))
+        return dt
 
     # K Nearest Neighbors
     def train_knn(self):
         knn = KNeighborsClassifier()
         knn.fit(self.train_X_2d, self.train_y)
-        pred_y = knn.predict(self.val_X_2d)
-        print('KNN accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = knn.predict(self.val_X_2d)
+        # print('KNN accuracy:', accuracy_score(self.val_y, pred_y))
+        return knn
 
     # Logistic Regression
     def train_lr(self):
         lr = LogisticRegression(max_iter=200)
         lr.fit(self.train_X_2d, self.train_y)
-        pred_y = lr.predict(self.val_X_2d)
-        print('logistic regression accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = lr.predict(self.val_X_2d)
+        # print('logistic regression accuracy:', accuracy_score(self.val_y, pred_y))
+        return lr
 
     # Multi-Layer Perceptron
     def train_mlp(self):
@@ -241,7 +269,6 @@ class DrunkDetector:
             'learning_rate': ['constant', 'invscaling', 'adaptive'],
             'activation': ['identity', 'logistic', 'tanh', 'relu'],
             'solver': ['lbfgs', 'sgd', 'adam']
-            # 'hidden_layer_sizes': []
         }
         mlp = MLPClassifier()
         clf = GridSearchCV(mlp, parameters)
@@ -256,31 +283,34 @@ class DrunkDetector:
             'min_impurity_decrease': [0, 0.25, 0.5], # 0
             'class_weight': [None, 'balanced'] # balanced
         }
-        rfc = RandomForestClassifier()
-        clf = GridSearchCV(rfc, parameters)
-        clf.fit(self.train_X_2d, self.train_y)
-        pred_y = clf.predict(self.val_X_2d)
-        print('random forest accuracy:', accuracy_score(self.val_y, pred_y))
-        print('\tparams:', clf.best_params_)
+        rfc = RandomForestClassifier(class_weight='balanced', n_estimators=250, min_impurity_decrease=0)
+        # clf = GridSearchCV(rfc, parameters)
+        rfc.fit(self.train_X_2d, self.train_y)
+        # pred_y = rfc.predict(self.val_X_2d)
+        # print('random forest accuracy:', accuracy_score(self.val_y, pred_y))
+        # print('\tparams:', clf.best_params_)
+        return rfc
 
     # Stochastic Gradient Descent
     def train_sgd(self):
         sgd = SGDClassifier()
         sgd.fit(self.train_X_2d, self.train_y)
-        pred_y = sgd.predict(self.val_X_2d)
-        print('Stochastic Gradient Descent accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = sgd.predict(self.val_X_2d)
+        # print('Stochastic Gradient Descent accuracy:', accuracy_score(self.val_y, pred_y))
+        return sgd
 
     # Support Vector Machine
     def train_svm(self):
         svc = SVC()
         svc.fit(self.train_X_2d, self.train_y)
-        pred_y = svc.predict(self.val_X_2d)
-        print('svm accuracy:', accuracy_score(self.val_y, pred_y))
-        
+        # pred_y = svc.predict(self.val_X_2d)
+        # print('svm accuracy:', accuracy_score(self.val_y, pred_y))
+        return svc
+
     def prepare_data_cnn(self):
         assert self.args.data_mode == 'sum', \
                 'Use [-m sum] for training CNN'
-            
+
         self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
         self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
         self.test_X = tf.keras.utils.normalize(self.test_X, axis=1)
@@ -288,7 +318,7 @@ class DrunkDetector:
     # Convolutional Neural Network
     def train_cnn(self):
         self.prepare_data_cnn()
-        
+
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
         x, y = self.train_X.shape[1:]
@@ -306,12 +336,12 @@ class DrunkDetector:
         model.add(Conv2D(32, (3, 3)))
         model.add(Activation('relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
-                                   
+
         # Dense layer
         model.add(Flatten())
         model.add(Dense(64, activation='relu'))
         model.add(BatchNormalization())
-        
+
         # Output layer
         model.add(Dense(1))
         model.add(Activation('sigmoid'))
@@ -395,27 +425,26 @@ class DrunkDetector:
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
-        
+
     def test_best_model(self):
         self.prepare_data_cnn()
-                
+
         model = load_model('models/best.hdf5')
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
-        
-        
+
+
     # Convolutional Neural Network hyperparameter tuning
     def train_cnn_hyperparameters(self):
         self.prepare_data_cnn()
-        
-        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
+        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         x, y = self.train_X.shape[1:]
 
-        
+
         # saved_acc = pickle.load(open('saved_acc.pickle, 'rb'))
-        
+
         # hyperparameters
         num_convlayers = [1, 2, 3]
         convlayer_size = [8, 16, 32]
@@ -423,21 +452,21 @@ class DrunkDetector:
         denselayer_size = [128, 256, 512]
         learning_rate = [0.01, 0.001, 0.0001]
         batch_size = [16, 32]
-        
+
         # creates a list of all combinations of hyperparameters
         param_grid = list(itertools.product(
-            num_convlayers, convlayer_size, 
+            num_convlayers, convlayer_size,
             num_denselayers, denselayer_size,
-            learning_rate, 
+            learning_rate,
             batch_size))
 
         print(f'CNN hyperparameter tuning with {len(param_grid)} combinations')
-        
+
         # offset = len(saved_acc)
         for i, params in enumerate(shuffle(param_grid)):
-            
+
             print(f'Run {i}/{len(param_grid)}')
-            
+
             # tuning parameters
             num_convlayers, \
             convlayer_size, \
@@ -445,33 +474,33 @@ class DrunkDetector:
             denselayer_size, \
             learning_rate, \
             batch_size = params
-            
+
             NAME = f'n_clayers={num_convlayers},clayer_sz={convlayer_size},n_dlayers={num_denselayers},dlayer_sz={denselayer_size},lr={learning_rate},bat_size={batch_size}'
             tensorboard = TensorBoard(log_dir=f'logs/{NAME}')
-            
-#             save_best_model_loss = ModelCheckpoint("val_loss={val_loss:.4f}"+f"{NAME}.hdf5", 
-#                                                   monitor='val_loss', 
-#                                                   verbose=0, save_best_only=True, 
-#                                                   save_weights_only=False, 
+
+#             save_best_model_loss = ModelCheckpoint("val_loss={val_loss:.4f}"+f"{NAME}.hdf5",
+#                                                   monitor='val_loss',
+#                                                   verbose=0, save_best_only=True,
+#                                                   save_weights_only=False,
 #                                                   mode='auto', save_freq='epoch')
-#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint("val_acc={val_accuracy:.4f}"+f"{NAME}.hdf5", 
-#                                                      monitor='val_accuracy', 
-#                                                      verbose=0, save_best_only=True, 
-#                                                      save_weights_only=False, 
+#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint("val_acc={val_accuracy:.4f}"+f"{NAME}.hdf5",
+#                                                      monitor='val_accuracy',
+#                                                      verbose=0, save_best_only=True,
+#                                                      save_weights_only=False,
 #                                                      mode='auto', save_freq='epoch')
             early_stopping = tf.keras.callbacks.EarlyStopping(
-                                                    monitor='val_accuracy', 
+                                                    monitor='val_accuracy',
                                                     verbose=1,
                                                     patience=30,
                                                     mode='auto',
                                                     restore_best_weights=False)
-            
+
             model = Sequential()
             # Conv layer 1
             model.add(Conv2D(convlayer_size, (3, 3), input_shape=(x,y,1)))
             model.add(Activation('relu'))
             model.add(MaxPooling2D(pool_size=(2, 2)))
-            
+
             # Additional Conv layers
             for _ in range(num_convlayers-1):
                 model.add(Conv2D(convlayer_size, (3, 3)))
@@ -482,8 +511,8 @@ class DrunkDetector:
             model.add(Flatten())
             for _ in range(num_denselayers):
                 model.add(Dense(denselayer_size, activation='relu'))
-            
-            if False: 
+
+            if False:
                 model.add(BatchNormalization())
 
             model.add(Dense(1))
@@ -508,7 +537,7 @@ class DrunkDetector:
                       use_multiprocessing=True,
                       callbacks=[tensorboard, early_stopping])
 
-                                   
+
 # Shuffles a pair of equal size arrays in the same random order
 # Returns a tuple of shuffled arrays
 def shuffle_pair(X_arr, y_arr):
@@ -518,8 +547,8 @@ def shuffle_pair(X_arr, y_arr):
         X_arr_s.append(X)
         y_arr_s.append(y)
     return (np.array(X_arr_s), np.array(y_arr_s))
-    
-                                   
+
+
 # Only for X data, use np.array(y) for y data
 # Returns data formatted for Keras CNN input
 def cnn_data(data):
