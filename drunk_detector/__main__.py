@@ -160,7 +160,7 @@ class DrunkDetector:
             self.data = pickle.load(data_file)
 
         if self.args.data_mode == 'frames':
-            self.train_X = np.array([datum['thermal_frames'] for datum in self.data['train']])
+            self.train_X = shuffle(np.array([datum['thermal_frames'] for datum in self.data['train']])
             self.val_X = np.array([datum['thermal_frames'] for datum in self.data['val']])
             self.test_X = np.array([datum['thermal_frames'] for datum in self.data['test']])
         elif self.args.data_mode == 'sum':
@@ -175,6 +175,11 @@ class DrunkDetector:
         self.train_y = np.array([datum['y'] for datum in self.data['train']])
         self.val_y = np.array([datum['y'] for datum in self.data['val']])
         self.test_y = np.array([datum['y'] for datum in self.data['test']])
+        
+        # Shuffle data
+        self.train_X, self.train_y = shuffle_pair(self.train_X, self.train_y)
+        self.val_X, self.val_y = shuffle_pair(self.val_X, self.val_y)
+        self.test_X, self.test_y = shuffle_pair(self.test_X, self.test_y)
 
         # self.train_svm()
         # self.train_rf()
@@ -250,8 +255,8 @@ class DrunkDetector:
 
     # Convolutional Neural Network
     def train_cnn(self):
-        #assert self.args.data_mode == 'sum', \
-                #'Use [-m sum] for training CNN'
+        assert self.args.data_mode == 'sum', \
+                'Use [-m sum] for training CNN'
             
         self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
         self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
@@ -274,11 +279,13 @@ class DrunkDetector:
         model.add(Conv2D(32, (3, 3)))
         model.add(Activation('relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
-        # Output layer
+                                   
+        # Dense layer
         model.add(Flatten())
         model.add(Dense(64, activation='relu'))
         model.add(BatchNormalization())
         
+        # Output layer
         model.add(Dense(1))
         model.add(Activation('sigmoid'))
 
@@ -472,7 +479,18 @@ class DrunkDetector:
                       use_multiprocessing=True,
                       callbacks=[tensorboard, early_stopping])
 
-
+                                   
+# Shuffles a pair of equal size arrays in the same random order
+# Returns a tuple of shuffled arrays
+def shuffle_pair(X_arr, y_arr):
+    X_arr_s = []
+    y_arr_s = []
+    for X, y in shuffle(list(zip(X_arr, y_arr))):
+        X_arr_s.append(X)
+        y_arr_s.append(y)
+    return (np.array(X_arr_s), np.array(y_arr_s))
+    
+                                   
 # Only for X data, use np.array(y) for y data
 # Returns data formatted for Keras CNN input
 def cnn_data(data):
