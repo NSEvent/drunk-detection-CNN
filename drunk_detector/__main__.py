@@ -19,6 +19,8 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GridSearchCV
 
 from imgaug import augmenters as iaa
+from statsmodels.stats.anova import AnovaRM
+import pandas as pd
 
 # Model types
 from sklearn.ensemble import RandomForestClassifier
@@ -59,7 +61,7 @@ class DrunkDetector:
             pickle.dump(self.data, out_file)
 
     def augment_data(self, split_set):
-        
+
         augmented_data = []
         for datum in self.data[split_set]:
             # horizontal flip with a noise on non-zero values
@@ -184,7 +186,7 @@ class DrunkDetector:
         self.train_y = np.array([datum['y'] for datum in self.data['train']])
         self.val_y = np.array([datum['y'] for datum in self.data['val']])
         self.test_y = np.array([datum['y'] for datum in self.data['test']])
-        
+
         # Flip data
         flip_seq = iaa.Sequential([
             iaa.Fliplr(1), # horizontally flip all of the images
@@ -198,7 +200,7 @@ class DrunkDetector:
         flip_data = flip_seq(images=self.val_X)
         self.val_X = np.concatenate((self.val_X, flip_data), axis=0)
         self.val_y = np.concatenate((self.val_y, self.val_y), axis=0)
-        
+
         # Shuffle data
         self.train_X, self.train_y = shuffle_pair(self.train_X, self.train_y)
         self.val_X, self.val_y = shuffle_pair(self.val_X, self.val_y)
@@ -276,11 +278,11 @@ class DrunkDetector:
         svc.fit(self.train_X_2d, self.train_y)
         pred_y = svc.predict(self.val_X_2d)
         print('svm accuracy:', accuracy_score(self.val_y, pred_y))
-        
+
     def prepare_data_cnn(self):
         assert self.args.data_mode == 'sum', \
                 'Use [-m sum] for training CNN'
-            
+
         self.train_X = tf.keras.utils.normalize(self.train_X, axis=1)
         self.val_X = tf.keras.utils.normalize(self.val_X, axis=1)
         self.test_X = tf.keras.utils.normalize(self.test_X, axis=1)
@@ -288,7 +290,7 @@ class DrunkDetector:
     # Convolutional Neural Network
     def train_cnn(self):
         self.prepare_data_cnn()
-        
+
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
         x, y = self.train_X.shape[1:]
@@ -306,12 +308,12 @@ class DrunkDetector:
         model.add(Conv2D(32, (3, 3)))
         model.add(Activation('relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
-                                   
+
         # Dense layer
         model.add(Flatten())
         model.add(Dense(64, activation='relu'))
         model.add(BatchNormalization())
-        
+
         # Output layer
         model.add(Dense(1))
         model.add(Activation('sigmoid'))
@@ -395,27 +397,55 @@ class DrunkDetector:
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
-        
+
+
+    # Determine if a prediction is statistically significantly better than predicting all drunk
+    def test_model_significance(self, pred_y):
+        subject = [] # Keep track of person
+        correct = [] # Keep track of images correctly predicted
+        model_name = [] # Keep track of corresponding model name
+
+        for i, (true, pred) in enumerate(zip(self.test_y, pred_y)):
+            subject.append(i)
+            correct.append(int(true==pred))
+            model_name.append('best')
+        pred_drunk = []
+        for _ in range(len(self.test_y)):
+            pred_drunk.append(1)
+        for i, (true, pred) in enumerate(zip(self.test_y, pred_drunk)):
+            subject.append(i)
+            correct.append(int(true==pred))
+            model_name.append('drunk')
+
+        anova_dict = {'Correct/Incorrect':correct,'Test_ID':subject,'Model_Name':model_name}
+        anova_df = pd.DataFrame(anova_dict)
+
+        anovarm = AnovaRM(data=anova_df, depvar='Correct/Incorrect', subject='Test_ID', within=['Model_Name'])
+        fit = anovarm.fit()
+        print(fit.summary())
+
+
     def test_best_model(self):
         self.prepare_data_cnn()
-                
-        model = load_model('models/best.hdf5')
+
+        model = load_model('models/n_clayers=1,clayer_sz=8,n_dlayers=0,dlayer_sz=512,lr=0.01,bat_size=32FINAL-test_acc=0.8714285492897034.hdf5')
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
-        
-        
+        self.test_model_significance(pred_y)
+
+
     # Convolutional Neural Network hyperparameter tuning
     def train_cnn_hyperparameters(self):
         self.prepare_data_cnn()
-        
+
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
         x, y = self.train_X.shape[1:]
 
-        
+
         # saved_acc = pickle.load(open('saved_acc.pickle, 'rb'))
-        
+
         # hyperparameters
         num_convlayers = [1, 2, 3]
         convlayer_size = [8, 16, 32]
@@ -423,21 +453,21 @@ class DrunkDetector:
         denselayer_size = [128, 256, 512]
         learning_rate = [0.01, 0.001, 0.0001]
         batch_size = [16, 32]
-        
+
         # creates a list of all combinations of hyperparameters
         param_grid = list(itertools.product(
-            num_convlayers, convlayer_size, 
+            num_convlayers, convlayer_size,
             num_denselayers, denselayer_size,
-            learning_rate, 
+            learning_rate,
             batch_size))
 
         print(f'CNN hyperparameter tuning with {len(param_grid)} combinations')
-        
+
         # offset = len(saved_acc)
         for i, params in enumerate(shuffle(param_grid)):
-            
+
             print(f'Run {i}/{len(param_grid)}')
-            
+
             # tuning parameters
             num_convlayers, \
             convlayer_size, \
@@ -445,33 +475,33 @@ class DrunkDetector:
             denselayer_size, \
             learning_rate, \
             batch_size = params
-            
+
             NAME = f'n_clayers={num_convlayers},clayer_sz={convlayer_size},n_dlayers={num_denselayers},dlayer_sz={denselayer_size},lr={learning_rate},bat_size={batch_size}'
             tensorboard = TensorBoard(log_dir=f'logs/{NAME}')
-            
-#             save_best_model_loss = ModelCheckpoint("val_loss={val_loss:.4f}"+f"{NAME}.hdf5", 
-#                                                   monitor='val_loss', 
-#                                                   verbose=0, save_best_only=True, 
-#                                                   save_weights_only=False, 
+
+#             save_best_model_loss = ModelCheckpoint(NAME + "val_loss={val_loss:.4f}.hdf5",
+#                                                   monitor='val_loss',
+#                                                   verbose=0, save_best_only=True,
+#                                                   save_weights_only=False,
 #                                                   mode='auto', save_freq='epoch')
-#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint("val_acc={val_accuracy:.4f}"+f"{NAME}.hdf5", 
-#                                                      monitor='val_accuracy', 
-#                                                      verbose=0, save_best_only=True, 
-#                                                      save_weights_only=False, 
+#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint(NAME + "val_acc={val_accuracy:.4f}.hdf5",
+#                                                      monitor='val_accuracy',
+#                                                      verbose=0, save_best_only=True,
+#                                                      save_weights_only=False,
 #                                                      mode='auto', save_freq='epoch')
             early_stopping = tf.keras.callbacks.EarlyStopping(
-                                                    monitor='val_accuracy', 
+                                                    monitor='val_accuracy',
                                                     verbose=1,
                                                     patience=30,
                                                     mode='auto',
                                                     restore_best_weights=False)
-            
+
             model = Sequential()
             # Conv layer 1
             model.add(Conv2D(convlayer_size, (3, 3), input_shape=(x,y,1)))
             model.add(Activation('relu'))
             model.add(MaxPooling2D(pool_size=(2, 2)))
-            
+
             # Additional Conv layers
             for _ in range(num_convlayers-1):
                 model.add(Conv2D(convlayer_size, (3, 3)))
@@ -482,8 +512,8 @@ class DrunkDetector:
             model.add(Flatten())
             for _ in range(num_denselayers):
                 model.add(Dense(denselayer_size, activation='relu'))
-            
-            if False: 
+
+            if False:
                 model.add(BatchNormalization())
 
             model.add(Dense(1))
@@ -508,7 +538,10 @@ class DrunkDetector:
                       use_multiprocessing=True,
                       callbacks=[tensorboard, early_stopping])
 
-                                   
+            save_model(model, NAME + f'FINAL-test_acc={model.evaluate(cnn_data(self.test_X),self.test_y)[1]}.hdf5')
+
+
+
 # Shuffles a pair of equal size arrays in the same random order
 # Returns a tuple of shuffled arrays
 def shuffle_pair(X_arr, y_arr):
@@ -518,8 +551,8 @@ def shuffle_pair(X_arr, y_arr):
         X_arr_s.append(X)
         y_arr_s.append(y)
     return (np.array(X_arr_s), np.array(y_arr_s))
-    
-                                   
+
+
 # Only for X data, use np.array(y) for y data
 # Returns data formatted for Keras CNN input
 def cnn_data(data):
