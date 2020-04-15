@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # e.g.: python drunk_detector data --train-files data/train/*/* --test-files data/test/*/* --val-files data/validation/*/*
-#       python drunk_detector train -d data_2020-03-18_20-59-45.pickle
+#       python drunk_detector train -d data_2020-04-09_12-20-39.pickle
 # tensorboard --logdir="logs/"
 
 import argparse
@@ -23,7 +23,7 @@ from statsmodels.stats.anova import AnovaRM
 import pandas as pd
 
 # Model types
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
@@ -64,68 +64,69 @@ class DrunkDetector:
 
         augmented_data = []
         for datum in self.data[split_set]:
-            # horizontal flip with a noise on non-zero values
-            variance = [[[20 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
-            thermal_frames = np.random.normal(np.flip(datum['thermal_frames'], 2), variance)
-            thermal_sum = np.zeros((128, 160))
-            for f, frame in enumerate(thermal_frames):
-                min_val = max(np.amin(frame), 0)
-                frame -= min_val
-                for r, row in enumerate(frame):
-                    for c, val in enumerate(row):
-                        if val < 0:
-                            val = 0
-                            thermal_frames[f, r, c] = 0
-                        thermal_sum[r, c] += val
-            augmented_data.append({
-                'filename': datum['filename'] + '_flipped',
-                'thermal_sum': thermal_sum,
-                'thermal_frames': thermal_frames,
-                'y': datum['y']
-            })
+            for _ in range(1 if datum['y'] else 1):
+                # horizontal flip with a noise on non-zero values
+                variance = [[[20 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
+                thermal_frames = np.random.normal(np.flip(datum['thermal_frames'], 2), variance)
+                thermal_sum = np.zeros((128, 160))
+                for f, frame in enumerate(thermal_frames):
+                    min_val = max(np.amin(frame), 0)
+                    frame -= min_val
+                    for r, row in enumerate(frame):
+                        for c, val in enumerate(row):
+                            if val < 0:
+                                val = 0
+                                thermal_frames[f, r, c] = 0
+                            thermal_sum[r, c] += val
+                augmented_data.append({
+                    'filename': datum['filename'] + '_flipped',
+                    'thermal_sum': thermal_sum,
+                    'thermal_frames': thermal_frames,
+                    'y': datum['y']
+                })
 
-            # noisy version of image
-            variance = [[[100 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
-            thermal_frames = np.random.normal(datum['thermal_frames'], variance)
-            thermal_sum = np.zeros((128, 160))
-            for f, frame in enumerate(thermal_frames):
-                min_val = max(np.amin(frame), 0)
-                frame -= min_val
-                for r, row in enumerate(frame):
-                    for c, val in enumerate(row):
-                        if val < 0:
-                            val = 0
-                            thermal_frames[f, r, c] = 0
-                        thermal_sum[r, c] += val
-            augmented_data.append({
-                'filename': datum['filename'] + '_noisy',
-                'thermal_sum': thermal_sum,
-                'thermal_frames': thermal_frames,
-                'y': datum['y']
-            })
+                # noisy version of image
+                variance = [[[25 if col else 0 for col in row] for row in layer ] for layer in datum['thermal_frames']]
+                thermal_frames = np.random.normal(datum['thermal_frames'], variance)
+                thermal_sum = np.zeros((128, 160))
+                for f, frame in enumerate(thermal_frames):
+                    min_val = max(np.amin(frame), 0)
+                    frame -= min_val
+                    for r, row in enumerate(frame):
+                        for c, val in enumerate(row):
+                            if val < 0:
+                                val = 0
+                                thermal_frames[f, r, c] = 0
+                            thermal_sum[r, c] += val
+                augmented_data.append({
+                    'filename': datum['filename'] + '_noisy',
+                    'thermal_sum': thermal_sum,
+                    'thermal_frames': thermal_frames,
+                    'y': datum['y']
+                })
 
-            # blurred version of image
-            thermal_frames = gaussian_filter(datum['thermal_frames'], sigma=3)
-            thermal_sum = np.zeros((128, 160))
-            for _, frame in enumerate(thermal_frames):
-                min_val = max(np.amin(frame), 0)
-                frame -= min_val
-                for r, row in enumerate(frame):
-                    for c, val in enumerate(row):
-                        thermal_sum[r, c] += val
-            augmented_data.append({
-                'filename': datum['filename'] + '_blur',
-                'thermal_sum': thermal_sum,
-                'thermal_frames': thermal_frames,
-                'y': datum['y']
-            })
+                # blurred version of image
+                thermal_frames = gaussian_filter(datum['thermal_frames'], sigma=3)
+                thermal_sum = np.zeros((128, 160))
+                for _, frame in enumerate(thermal_frames):
+                    min_val = max(np.amin(frame), 0)
+                    frame -= min_val
+                    for r, row in enumerate(frame):
+                        for c, val in enumerate(row):
+                            thermal_sum[r, c] += val
+                augmented_data.append({
+                    'filename': datum['filename'] + '_blur',
+                    'thermal_sum': thermal_sum,
+                    'thermal_frames': thermal_frames,
+                    'y': datum['y']
+                })
 
-            im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
-            im.show()
-            im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
-            im_orig.show()
-            im_orig.show()
-            breakpoint()
+            # im = Image.fromarray(thermal_sum/np.max(thermal_sum) * 255)
+            # im.show()
+            # im_orig = Image.fromarray(datum['thermal_sum']/np.max(datum['thermal_sum']) * 255)
+            # im_orig.show()
+            # im_orig.show()
+
         self.data[split_set] += augmented_data
 
     def read_images(self, files, split_set):
@@ -206,36 +207,63 @@ class DrunkDetector:
         self.val_X, self.val_y = shuffle_pair(self.val_X, self.val_y)
         self.test_X, self.test_y = shuffle_pair(self.test_X, self.test_y)
 
-        # self.train_svm()
-        # self.train_rf()
-        # self.train_lr()
-        # self.train_sgd()
-        # self.train_knn()
-        # self.train_dt()
+        # svc = self.train_svm()
+        # rfc = self.train_rf()
+        # lr = self.train_lr()
+        # sgd = self.train_sgd()
+        # knn = self.train_knn()
+        # dt = self.train_dt()
+        voter = self.train_voter()
         # self.train_mlp()
         self.test_best_model()
         # self.train_cnn_hyperparameters()
+
+        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        filename = '{}_{}.pickle'.format('voter', curr_datetime)
+        with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
+            pickle.dump(voter, out_file)
+
+
+    # Voting Classifier
+    def train_voter(self):
+        dt = DecisionTreeClassifier()
+        knn = KNeighborsClassifier()
+        lr = LogisticRegression(max_iter=200)
+        rfc = RandomForestClassifier(class_weight='balanced', n_estimators=250, min_impurity_decrease=0)
+        sgd = SGDClassifier(loss='log')
+        svc = SVC(probability=True)
+        voter = VotingClassifier(
+            estimators=[('dt', dt), ('knn', knn), ('lr', lr), ('rfc', rfc), ('sgd', sgd), ('svc', svc)],
+            voting='soft')
+
+        voter.fit(self.train_X_2d, self.train_y)
+        pred_y = voter.predict(self.val_X_2d)
+        print('voter accuracy:', accuracy_score(self.val_y, pred_y))
+        return voter
 
     # Decision Tree
     def train_dt(self):
         dt = DecisionTreeClassifier()
         dt.fit(self.train_X_2d, self.train_y)
-        pred_y = dt.predict(self.val_X_2d)
-        print('Decision Tree accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = dt.predict(self.val_X_2d)
+        # print('Decision Tree accuracy:', accuracy_score(self.val_y, pred_y))
+        return dt
 
     # K Nearest Neighbors
     def train_knn(self):
         knn = KNeighborsClassifier()
         knn.fit(self.train_X_2d, self.train_y)
-        pred_y = knn.predict(self.val_X_2d)
-        print('KNN accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = knn.predict(self.val_X_2d)
+        # print('KNN accuracy:', accuracy_score(self.val_y, pred_y))
+        return knn
 
     # Logistic Regression
     def train_lr(self):
         lr = LogisticRegression(max_iter=200)
         lr.fit(self.train_X_2d, self.train_y)
-        pred_y = lr.predict(self.val_X_2d)
-        print('logistic regression accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = lr.predict(self.val_X_2d)
+        # print('logistic regression accuracy:', accuracy_score(self.val_y, pred_y))
+        return lr
 
     # Multi-Layer Perceptron
     def train_mlp(self):
@@ -243,7 +271,6 @@ class DrunkDetector:
             'learning_rate': ['constant', 'invscaling', 'adaptive'],
             'activation': ['identity', 'logistic', 'tanh', 'relu'],
             'solver': ['lbfgs', 'sgd', 'adam']
-            # 'hidden_layer_sizes': []
         }
         mlp = MLPClassifier()
         clf = GridSearchCV(mlp, parameters)
@@ -258,26 +285,31 @@ class DrunkDetector:
             'min_impurity_decrease': [0, 0.25, 0.5], # 0
             'class_weight': [None, 'balanced'] # balanced
         }
-        rfc = RandomForestClassifier()
-        clf = GridSearchCV(rfc, parameters)
-        clf.fit(self.train_X_2d, self.train_y)
-        pred_y = clf.predict(self.val_X_2d)
-        print('random forest accuracy:', accuracy_score(self.val_y, pred_y))
-        print('\tparams:', clf.best_params_)
+        rfc = RandomForestClassifier(class_weight='balanced', n_estimators=250, min_impurity_decrease=0)
+        # clf = GridSearchCV(rfc, parameters)
+        rfc.fit(self.train_X_2d, self.train_y)
+        # pred_y = rfc.predict(self.val_X_2d)
+        # print('random forest accuracy:', accuracy_score(self.val_y, pred_y))
+        # print('\tparams:', clf.best_params_)
+        return rfc
 
     # Stochastic Gradient Descent
     def train_sgd(self):
         sgd = SGDClassifier()
         sgd.fit(self.train_X_2d, self.train_y)
-        pred_y = sgd.predict(self.val_X_2d)
-        print('Stochastic Gradient Descent accuracy:', accuracy_score(self.val_y, pred_y))
+        # pred_y = sgd.predict(self.val_X_2d)
+        # print('Stochastic Gradient Descent accuracy:', accuracy_score(self.val_y, pred_y))
+        return sgd
 
     # Support Vector Machine
     def train_svm(self):
         svc = SVC()
         svc.fit(self.train_X_2d, self.train_y)
-        pred_y = svc.predict(self.val_X_2d)
-        print('svm accuracy:', accuracy_score(self.val_y, pred_y))
+
+        # pred_y = svc.predict(self.val_X_2d)
+        # print('svm accuracy:', accuracy_score(self.val_y, pred_y))
+        return svc
+
 
     def prepare_data_cnn(self):
         assert self.args.data_mode == 'sum', \
@@ -399,6 +431,7 @@ class DrunkDetector:
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
 
 
+
     # Determine if a prediction is statistically significantly better than predicting all drunk
     def test_model_significance(self, pred_y):
         subject = [] # Keep track of person
@@ -435,12 +468,12 @@ class DrunkDetector:
         self.test_model_significance(pred_y)
 
 
+
     # Convolutional Neural Network hyperparameter tuning
     def train_cnn_hyperparameters(self):
         self.prepare_data_cnn()
 
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-
         x, y = self.train_X.shape[1:]
 
 
