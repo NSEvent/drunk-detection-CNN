@@ -2,6 +2,7 @@
 
 # e.g.: python drunk_detector data --train-files data/train/*/* --test-files data/test/*/* --val-files data/validation/*/*
 #       python drunk_detector train -d data_2020-04-09_12-20-39.pickle
+#       python drunk_detector predict -d data_2020-04-09_12-20-39.pickle -c voter_2020-04-10_20-51-32.pickle
 # tensorboard --logdir="logs/"
 
 import argparse
@@ -161,6 +162,25 @@ class DrunkDetector:
         else:
             return 1
 
+    def predict(self):
+        pass
+        with open(self.args.classifier, 'rb') as clf_file:
+            self.clf = pickle.load(clf_file)
+
+        with open(self.args.data, 'rb') as data_file:
+            self.data = pickle.load(data_file)
+
+        if self.args.data_mode == 'frames':
+            self.test_X = np.array([datum['thermal_frames'] for datum in self.data['test']])
+        elif self.args.data_mode == 'sum':
+            self.test_X = np.array([datum['thermal_sum'] for datum in self.data['test']])
+
+        self.test_X_2d = np.array([datum.flatten() for datum in self.test_X])
+        self.test_y = np.array([datum['y'] for datum in self.data['test']])
+
+        pred_y =  self.clf.predict(self.test_X_2d)
+        print('Classifier accuracy:', accuracy_score(self.test_y, pred_y))
+
     def train(self):
         if self.args.data is None:
             print('Error: No data given.')
@@ -213,11 +233,11 @@ class DrunkDetector:
         # dt = self.train_dt()
         voter = self.train_voter()
         # self.train_mlp()
-        self.test_best_model()
+        # self.test_best_model()
         # self.train_cnn_hyperparameters()
 
         curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = '{}_{}.pickle'.format('voter', curr_datetime)
+        filename = '{}_{}.pickle'.format(self.args.name, curr_datetime)
         with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
             pickle.dump(voter, out_file)
 
@@ -236,7 +256,7 @@ class DrunkDetector:
 
         voter.fit(self.train_X_2d, self.train_y)
         pred_y = voter.predict(self.val_X_2d)
-        print('voter accuracy:', accuracy_score(self.val_y, pred_y))
+        # print('voter accuracy:', accuracy_score(self.val_y, pred_y))
         return voter
 
     # Decision Tree
@@ -567,10 +587,11 @@ def parse_args():
         help='Files to test model on.')
     parser.add_argument('--val-files', nargs='+', type=str, default=[],
         help='Files to validate model on.')
+    parser.add_argument('-n', '--name', type=str, default='clf', help='name of trained classifier')
+    parser.add_argument('-c', '--classifier', type=str, help='trained classifier for predictions')
     args = parser.parse_args()
     if args.mode not in ['data', 'train', 'predict']:
         parser.print_help()
-    print(args)
     return args
 
 
@@ -587,4 +608,5 @@ if __name__ == '__main__':
 
     elif args.mode == 'predict':
         # TODO randomize test data here
+        dd.predict();
         pass
