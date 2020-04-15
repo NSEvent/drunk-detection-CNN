@@ -20,6 +20,8 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GridSearchCV
 
 from imgaug import augmenters as iaa
+from statsmodels.stats.anova import AnovaRM
+import pandas as pd
 
 # Model types
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
@@ -323,9 +325,11 @@ class DrunkDetector:
     def train_svm(self):
         svc = SVC()
         svc.fit(self.train_X_2d, self.train_y)
+
         # pred_y = svc.predict(self.val_X_2d)
         # print('svm accuracy:', accuracy_score(self.val_y, pred_y))
         return svc
+
 
     def prepare_data_cnn(self):
         assert self.args.data_mode == 'sum', \
@@ -446,13 +450,43 @@ class DrunkDetector:
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
 
+
+
+    # Determine if a prediction is statistically significantly better than predicting all drunk
+    def test_model_significance(self, pred_y):
+        subject = [] # Keep track of person
+        correct = [] # Keep track of images correctly predicted
+        model_name = [] # Keep track of corresponding model name
+
+        for i, (true, pred) in enumerate(zip(self.test_y, pred_y)):
+            subject.append(i)
+            correct.append(int(true==pred))
+            model_name.append('best')
+        pred_drunk = []
+        for _ in range(len(self.test_y)):
+            pred_drunk.append(1)
+        for i, (true, pred) in enumerate(zip(self.test_y, pred_drunk)):
+            subject.append(i)
+            correct.append(int(true==pred))
+            model_name.append('drunk')
+
+        anova_dict = {'Correct/Incorrect':correct,'Test_ID':subject,'Model_Name':model_name}
+        anova_df = pd.DataFrame(anova_dict)
+
+        anovarm = AnovaRM(data=anova_df, depvar='Correct/Incorrect', subject='Test_ID', within=['Model_Name'])
+        fit = anovarm.fit()
+        print(fit.summary())
+
+
     def test_best_model(self):
         self.prepare_data_cnn()
 
-        model = load_model('models/best.hdf5')
+        model = load_model('models/n_clayers=1,clayer_sz=8,n_dlayers=0,dlayer_sz=512,lr=0.01,bat_size=32FINAL-test_acc=0.8714285492897034.hdf5')
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
+        self.test_model_significance(pred_y)
+
 
 
     # Convolutional Neural Network hyperparameter tuning
@@ -498,12 +532,12 @@ class DrunkDetector:
             NAME = f'n_clayers={num_convlayers},clayer_sz={convlayer_size},n_dlayers={num_denselayers},dlayer_sz={denselayer_size},lr={learning_rate},bat_size={batch_size}'
             tensorboard = TensorBoard(log_dir=f'logs/{NAME}')
 
-#             save_best_model_loss = ModelCheckpoint("val_loss={val_loss:.4f}"+f"{NAME}.hdf5",
+#             save_best_model_loss = ModelCheckpoint(NAME + "val_loss={val_loss:.4f}.hdf5",
 #                                                   monitor='val_loss',
 #                                                   verbose=0, save_best_only=True,
 #                                                   save_weights_only=False,
 #                                                   mode='auto', save_freq='epoch')
-#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint("val_acc={val_accuracy:.4f}"+f"{NAME}.hdf5",
+#             save_best_model_acc = tf.keras.callbacks.ModelCheckpoint(NAME + "val_acc={val_accuracy:.4f}.hdf5",
 #                                                      monitor='val_accuracy',
 #                                                      verbose=0, save_best_only=True,
 #                                                      save_weights_only=False,
@@ -556,6 +590,9 @@ class DrunkDetector:
                       shuffle=True,
                       use_multiprocessing=True,
                       callbacks=[tensorboard, early_stopping])
+
+            save_model(model, NAME + f'FINAL-test_acc={model.evaluate(cnn_data(self.test_X),self.test_y)[1]}.hdf5')
+
 
 
 # Shuffles a pair of equal size arrays in the same random order
