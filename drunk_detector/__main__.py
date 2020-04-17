@@ -487,8 +487,21 @@ class DrunkDetector:
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
         self.test_model_significance(pred_y)
 
-        plot_confusion_matrix(confusion_matrix(self.test_y, pred_y))
+        plot_confusion_matrix(confusion_matrix(self.test_y, pred_y), target_names=['sober', 'drunk'])
 
+
+    def test_best_model(self):
+        self.prepare_data_cnn()
+
+        model = load_model('../models/n_clayers=1,clayer_sz=8,n_dlayers=0,dlayer_sz=512,lr=0.01,bat_size=32FINAL-test_acc=0.8714285492897034.hdf5')
+        pred_y = model.predict_classes(cnn_data(self.test_X))
+        print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
+        print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
+        self.test_model_significance(pred_y)
+
+        plot_confusion_matrix(confusion_matrix(self.test_y, pred_y), target_names=['sober', 'drunk'])
+        import time; time.sleep(1)
+        self.demo_model(pred_y)
 
 
     # Convolutional Neural Network hyperparameter tuning
@@ -596,6 +609,23 @@ class DrunkDetector:
             save_model(model, NAME + f'FINAL-test_acc={model.evaluate(cnn_data(self.test_X),self.test_y)[1]}.hdf5')
 
 
+# For use in demo to border images
+def add_border(pil_image, border, match):
+    color = ''
+    if match:
+        color = 'green'
+    else:
+        color = 'red'
+
+    pil_image = pil_image.convert('RGB')
+
+    if isinstance(border, int) or isinstance(border, tuple):
+        bimg = ImageOps.expand(pil_image, border=border, fill=color)
+    else:
+        raise RuntimeError('Border is not an integer or tuple!')
+    return bimg
+
+
 def plot_confusion_matrix(cm,
                           target_names,
                           title='Confusion matrix',
@@ -669,7 +699,7 @@ def plot_confusion_matrix(cm,
                      color="white" if cm[i, j] > thresh else "black")
 
 
-    plt.tight_layout()
+    #plt.tight_layout()
     plt.ylabel('True label')
     plt.xlabel('Predicted label\naccuracy={:0.4f}; misclass={:0.4f}'.format(accuracy, misclass))
     plt.savefig('confusion_matrix.png')
