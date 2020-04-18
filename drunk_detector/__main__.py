@@ -10,7 +10,7 @@ import datetime
 import numpy as np
 import os
 import pickle
-from PIL import Image
+from PIL import Image, ImageOps
 import re
 import itertools
 import matplotlib.pyplot as plt
@@ -478,22 +478,25 @@ class DrunkDetector:
         print(fit.summary())
 
 
+    def demo_model(self, pred_y):
+        print('Making predictions on 70 images in test set')
+
+        state = ['sober', 'drunk']
+        for i,(actual,pred) in enumerate(zip(self.test_y ,pred_y)):
+            if i > 0:
+                print(); print()
+
+            bw = Image.fromarray(self.test_X[i]*1500).convert('L')
+            add_border
+            plt.imshow(add_border(bw, 25, int(actual)==int(pred)))
+            print(f'Actual: {state[int(actual)]}, Predicted: {state[int(pred)]}', flush=True)
+            input('Enter for next prediction:')
+
+
     def test_best_model(self):
         self.prepare_data_cnn()
 
         model = load_model('models/n_clayers=1,clayer_sz=8,n_dlayers=0,dlayer_sz=512,lr=0.01,bat_size=32FINAL-test_acc=0.8714285492897034.hdf5')
-        pred_y = model.predict_classes(cnn_data(self.test_X))
-        print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
-        print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
-        self.test_model_significance(pred_y)
-
-        plot_confusion_matrix(confusion_matrix(self.test_y, pred_y), target_names=['sober', 'drunk'])
-
-
-    def test_best_model(self):
-        self.prepare_data_cnn()
-
-        model = load_model('../models/n_clayers=1,clayer_sz=8,n_dlayers=0,dlayer_sz=512,lr=0.01,bat_size=32FINAL-test_acc=0.8714285492897034.hdf5')
         pred_y = model.predict_classes(cnn_data(self.test_X))
         print('CNN accuracy:', accuracy_score(self.test_y, pred_y))
         print('CNN confusion matrix\n', confusion_matrix(self.test_y, pred_y))
