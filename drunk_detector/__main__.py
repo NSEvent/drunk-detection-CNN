@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # e.g.: python drunk_detector data --train-files data/train/*/* --test-files data/test/*/* --val-files data/validation/*/*
-#       python drunk_detector train -d data_2020-04-09_12-20-39.pickle
+#       python drunk_detector train -m sum -d data_2020-04-09_12-20-39.pickle
 #       python drunk_detector predict -d data_2020-04-09_12-20-39.pickle -c voter_2020-04-10_20-51-32.pickle
 # tensorboard --logdir="logs/"
 
@@ -165,23 +165,67 @@ class DrunkDetector:
             return 1
 
     def predict(self):
-        pass
-        with open(self.args.classifier, 'rb') as clf_file:
-            self.clf = pickle.load(clf_file)
+        # pass
+        # with open(self.args.classifier, 'rb') as clf_file:
+        #     self.clf = pickle.load(clf_file)
+        #
+        # with open(self.args.data, 'rb') as data_file:
+        #     self.data = pickle.load(data_file)
+        #
+        # if self.args.data_mode == 'frames':
+        #     self.test_X = np.array([datum['thermal_frames'] for datum in self.data['test']])
+        # elif self.args.data_mode == 'sum':
+        #     self.test_X = np.array([datum['thermal_sum'] for datum in self.data['test']])
+        #
+        # self.test_X_2d = np.array([datum.flatten() for datum in self.test_X])
+        # self.test_y = np.array([datum['y'] for datum in self.data['test']])
+        #
+        # pred_y =  self.clf.predict(self.test_X_2d)
+        # print('Classifier accuracy:', accuracy_score(self.test_y, pred_y))
+        if self.args.data is None:
+            print('Error: No data given.')
+            exit(1)
 
         with open(self.args.data, 'rb') as data_file:
             self.data = pickle.load(data_file)
 
         if self.args.data_mode == 'frames':
+            self.train_X = np.array([datum['thermal_frames'] for datum in self.data['train']])
+            self.val_X = np.array([datum['thermal_frames'] for datum in self.data['val']])
             self.test_X = np.array([datum['thermal_frames'] for datum in self.data['test']])
         elif self.args.data_mode == 'sum':
+            self.train_X = np.array([datum['thermal_sum'] for datum in self.data['train']])
+            self.val_X = np.array([datum['thermal_sum'] for datum in self.data['val']])
             self.test_X = np.array([datum['thermal_sum'] for datum in self.data['test']])
 
+        self.train_X_2d = np.array([datum.flatten() for datum in self.train_X])
+        self.val_X_2d = np.array([datum.flatten() for datum in self.val_X])
         self.test_X_2d = np.array([datum.flatten() for datum in self.test_X])
+
+        self.train_y = np.array([datum['y'] for datum in self.data['train']])
+        self.val_y = np.array([datum['y'] for datum in self.data['val']])
         self.test_y = np.array([datum['y'] for datum in self.data['test']])
 
-        pred_y =  self.clf.predict(self.test_X_2d)
-        print('Classifier accuracy:', accuracy_score(self.test_y, pred_y))
+        # Flip data
+        flip_seq = iaa.Sequential([
+            iaa.Fliplr(1), # horizontally flip all of the images
+        ])
+        flip_data = flip_seq(images=self.train_X)
+        self.train_X = np.concatenate((self.train_X, flip_data), axis=0)
+        self.train_y = np.concatenate((self.train_y, self.train_y), axis=0)
+        flip_data = flip_seq(images=self.test_X)
+        self.test_X = np.concatenate((self.test_X, flip_data), axis=0)
+        self.test_y = np.concatenate((self.test_y, self.test_y), axis=0)
+        flip_data = flip_seq(images=self.val_X)
+        self.val_X = np.concatenate((self.val_X, flip_data), axis=0)
+        self.val_y = np.concatenate((self.val_y, self.val_y), axis=0)
+
+        # Shuffle data
+        self.train_X, self.train_y = shuffle_pair(self.train_X, self.train_y)
+        self.val_X, self.val_y = shuffle_pair(self.val_X, self.val_y)
+        self.test_X, self.test_y = shuffle_pair(self.test_X, self.test_y)
+
+        self.test_best_model()
 
     def train(self):
         if self.args.data is None:
@@ -234,15 +278,14 @@ class DrunkDetector:
         # knn = self.train_knn()
         # dt = self.train_dt()
         # voter = self.train_voter()
-        # self.train_mlp()
+        # mlp = self.train_mlp()
+        cnn = self.train_cnn_hyperparameters()
 
         # curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         # filename = '{}_{}.pickle'.format(self.args.name, curr_datetime)
         # with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
         #     pickle.dump(voter, out_file)
 
-        self.test_best_model()
-        # self.train_cnn_hyperparameters()
 
     # Voting Classifier
     def train_voter(self):
