@@ -235,14 +235,14 @@ class DrunkDetector:
         # dt = self.train_dt()
         # voter = self.train_voter()
         # self.train_mlp()
+
+        # curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        # filename = '{}_{}.pickle'.format(self.args.name, curr_datetime)
+        # with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
+        #     pickle.dump(voter, out_file)
+
         self.test_best_model()
         # self.train_cnn_hyperparameters()
-
-        curr_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = '{}_{}.pickle'.format(self.args.name, curr_datetime)
-        with open(os.path.join(self.args.output_dir, filename), 'wb') as out_file:
-            pickle.dump(voter, out_file)
-
 
     # Voting Classifier
     def train_voter(self):
