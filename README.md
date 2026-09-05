@@ -49,8 +49,6 @@ python drunk_detector predict -m sum -d data_*.pickle
 python drunk_detector train -m sum -d data_*.pickle
 ```
 
+---
 
-
-
-
-
+*Built by **Kevin Tang** — indie iOS/macOS developer. I ship small, focused apps at [kevintang.xyz](https://kevintang.xyz) and write about building at [kevin.md](https://kevin.md).*
